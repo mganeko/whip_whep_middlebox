@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>WHEP Sever</title>
+</head>
+<body>
+  <div>
+    WebRTC HTTP Egress Protocol Server
+  </div>
+  WHEP Resouce: <input type="text" id="whep_recource" size="60" value="" readonly/><br />
+  <br />
+  <div>
+    <button id="start_peer_button" onclick="startPeer()">Connect</button>
+    <button id="stop_peer_button" onclick="stopPeer()">Disconnect</button>
+  </div>
+
+  <div>
+    <div>Subscripber (Egress)</div>
+    <video id="remote_video" width="320" height="240" style="border: solid 1px black;" volume=0>
+    </video>
+  </div>
+</body>
+<script>
+  let peer = null;
+  let mediaStream = null;
+  //const localVideo = document.getElementById('local_video');
+  const remoteVideo= document.getElementById('remote_video');
+
+  function updateUI() {
+    if (peer) {
+      disableElementById('start_peer_button');
+      enableElementById('stop_peer_button');
+    }
+    else {
+      disableElementById('stop_peer_button');
+      enableElementById('start_peer_button');
+    }
+  }
+
+
+  function enableElementById(id) {
+    const element = document.getElementById(id);
+    element.disabled = false;
+  }
+
+  function disableElementById(id) {
+    const element = document.getElementById(id);
+    element.disabled = true;
+  }
+
+  // function stopVideo() {
+  //   if (localVideo.srcObject) {
+  //     localVideo.srcObject.getTracks().forEach(track => track.stop());
+  //     localVideo.pause();
+  //     localVideo.srcObject = null;
+  //   }
+
+  //   localStream = null;
+  //   updateUI();
+  // }
+
+  async function startPeer() {
+    if (peer) {
+      console.warn('peer already exists.');
+      return;
+    }
+
+    const options = {
+      // "iceServers": [
+      //   {"urls": "stun:stun.webrtc.ecl.ntt.com:3478" },
+      //   {"urls": "stun:stun.l.google.com:19302" },
+      // ],
+      bundlePolicy: "max-bundle",
+    }
+    peer = new RTCPeerConnection(options);
+    peer.addTransceiver('audio', {direction: 'recvonly'});
+    peer.addTransceiver('video', {direction: 'recvonly'});
+    updateUI();
+
+    // -- event handler --
+    peer.ontrack = function(event) {
+      console.log('-- peer.ontrack()');
+      if (! mediaStream) {
+        mediaStream = event.streams[0];
+        playMedia(mediaStream);
+      }
+    };
+
+    peer.onicecandidate = async evt => {
+      if (evt.candidate) {
+        console.log(evt.candidate);
+      } else {
+        console.log('empty ice event. SDP ready to send');
+        const sdp = await peer.localDescription;
+ 
+        // // --- send sdp ---
+        // console.log('--- sending sdp with WHIP---');
+        // await sendWHIP(sdp.sdp);
+      }
+    }
+    peer.onconnectionstatechange = evt => {
+      console.log('peer connectionStateChange. state:', peer.connectionState);
+      if (peer.connectionState === 'failed') {
+        console.log('-- connection failed --');
+        //shutdownPeer();
+        stopPeer();
+      }
+    }
+    peer.onsignalingstatechange = evt => {
+      console.log('peer signalingStateChange. state:', peer.signalingState);
+    }
+
+    // --- create offer ---
+    const offer = await peer.createOffer();
+    console.log('createOffer() succsess. offer:,', offer);
+    console.log(offer.sdp);
+    await peer.setLocalDescription(offer);
+
+    // --- wait to complete ICE candidate ---
+    const desc = await waitToCompleteICEGathering(peer);
+    console.log('waitToCompleteICEGathering() succsess. local SDP:', desc.sdp);
+    
+    // --- send sdp ---
+    console.log('--- sending sdp with WHEP---');
+    await sendWHEP(desc.sdp);
+  }
+
+  // refer cloudflare example
+  // https://github.com/cloudflare/workers-sdk/blob/main/templates/stream/webrtc/src/negotiateConnectionWithClientOffer.js
+  async function waitToCompleteICEGathering(peerConnection) {
+    return new Promise((resolve) => {
+      /** Wait at most 1 second for ICE gathering. */
+      setTimeout(function () {
+        resolve(peerConnection.localDescription);
+      }, 1000);
+      peerConnection.onicegatheringstatechange = (ev) =>
+        peerConnection.iceGatheringState === "complete" &&
+        resolve(peerConnection.localDescription);
+    });
+  }
+
+
+  function setupVideoCodecs(transceiver) {
+    if (transceiver.sender.track.kind === 'video') {
+      const codecs = RTCRtpSender.getCapabilities('video').codecs;
+      console.log('codecs:', codecs);
+
+      // コーデックをフィルタする
+      const h264Codecs = codecs.filter(codec => codec.mimeType == "video/H264");
+      console.log('h264Codecs:', h264Codecs);
+      const h264Codec1 = [];
+      h264Codec1.push(h264Codecs[0]); // OK
+      //h264Codec1.push(h264Codecs[1]); // ERROR:  Failed to set remote answer sdp: The order of m-lines in answer doesn't match order in offer. Rejecting answer.
+      //h264Codec1.push(h264Codecs[2]); // ERROR
+      // h264Codec1.push(h264Codecs[3]); // ERROR
+
+      // // --- OK ---
+      // h264Codec1.push(h264Codecs[0]); 
+      // h264Codec1.push(h264Codecs[1]);
+      
+      console.log('h264Codec1:', h264Codec1);
+
+      //transceiver.setCodecPreferences(h264Codecs);
+      transceiver.setCodecPreferences(h264Codec1);  // NOT supported in Firefox
+    }
+    else {
+      console.warn('NOT video track');
+    }
+  }
+
+  function checkSenderParams(sender) {
+    const params = sender.getParameters();
+    console.log('sender params:', params);
+  }
+
+
+  function setupAudioCodecs(transceiver) {
+    if (transceiver.sender.track.kind === 'audio') {
+      const codecs = RTCRtpSender.getCapabilities('audio').codecs;
+      console.log('codecs:', codecs);
+
+      // コーデックをフィルタする
+      const opusCodecs = codecs.filter(codec => codec.mimeType == "audio/opus");
+      console.log('opusCodecs:', opusCodecs);
+      const opusCodecs1 = [];
+      opusCodecs1.push(opusCodecs[0]);
+      console.log('opusCodecs1:', opusCodecs1);
+
+      //transceiver.setCodecPreferences(opusCodecs);
+      transceiver.setCodecPreferences(opusCodecs1);
+    }
+    else {
+      console.warn('NOT audio track');
+    }
+  }
+
+
+  // ======== WHEP ========
+
+  // -- for node server --
+  const URL = '/whepsvr';
+
+  let whepResource;
+
+  async function sendWHEP(sdp) {
+    const headers = new Headers();
+    const opt = {};
+    headers.set("Content-Type", "application/sdp");
+    // headers.set("Authorization", 'Bearer ' + token);
+    // headers.set("X-Whip-Endpoint", endpoint);
+ 
+    opt.method = 'POST';
+    opt.headers = headers;
+    opt.body = sdp;
+    opt.keepalive = true;
+
+    const res = await fetch(URL, opt)
+    .catch(e => {
+      console.error(e);
+      return {
+        role: 'error',
+        content: 'Network ERROR, Please try again.',
+      };
+    });
+
+    console.log('WHEP response:', res);
+    if (res.status === 400) {
+      const s = res.headers.get("WWW-Authenticate");
+      console.log("400", s);
+    }
+    else if (res.status === 401) {
+      const s = res.headers.get("WWW-Authenticate");
+      console.log("400", s);
+    }
+    else if (res.status === 404) {
+      console.log("404");
+      stopPeer();
+    }
+    else if (res.status === 201) {
+      whepResource = res.headers.get("Location");
+      console.log('whepResource:', whepResource);
+      setWhepResouce(whepResource);
+      let sdp = await res.text();
+      console.log('remote sdp:', sdp);
+      let answer = new RTCSessionDescription({ type: "answer", sdp: sdp });
+      await peer.setRemoteDescription(answer);
+    }
+    else if (res.status === 200) {
+      console.warn('200 OK, but not expected.');
+    }
+  }
+
+  // --- disconnect peer ---
+  async function stopPeer() {
+    console.log('--- disconnect ---');
+    if (whepResource) {
+      await requestDelete(whepResource);
+      whepResource = null;
+      setWhepResouce('');
+    }
+
+    if (peer) {
+      peer.close();
+      peer = null;
+    }
+
+    stopMedia();
+    updateUI();
+  }
+
+  // function shutdownPeer() {
+  //   console.log('--- shutdown ---');
+  //   if (peer) {
+  //     peer.close();
+  //     peer = null;
+  //   }
+  //   whepResource = null;
+
+  //   stopMedia();
+  //   updateUI();
+  // }
+
+  //const URL_DELETE = '/whepsvrdelete';
+  async function requestDelete(resource) {
+    //const url = URL_DELETE;
+    const url = resource;
+    const res = await fetch(url, {
+      method: 'DELETE',
+    });
+  }
+
+  function setWhepResouce(resource) {
+    document.getElementById('whep_recource').value = resource;
+  }
+
+  // function encodeRresource(resource) {
+  //   return resource.replace(/\//g, '=');
+  // }
+
+  function playMedia(stream) {
+    console.log('playMedia()');
+    remoteVideo.srcObject = stream;
+    remoteVideo.play();
+    remoteVideo.volume = 0;
+  }
+
+  function stopMedia() {
+    if (remoteVideo.srcObject) {
+      remoteVideo.srcObject.getTracks().forEach(track => track.stop());
+      remoteVideo.pause();
+      remoteVideo.srcObject = null;
+    }
+
+    mediaStream = null;
+  }
+
+  // ========= init UI ==========
+  updateUI();
+</script>
+</html>

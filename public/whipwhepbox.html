@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>WHIP/WHEP boxr</title>
+</head>
+<body>
+  <div>
+    WebRTC WHIP/WHEP middle box
+  </div>
+  <div>
+    <button id="start_button" onclick="startListen()">Stand-by</button>
+    <button id="stop_button" onclick="stopListen()" >Quit</button>
+  </div>
+  <div>
+    <video id="remoteVideo" width="320" height="240" style="border: solid 1px black;" autoplay muted></video>
+  </div>
+  <div>
+    WHEP Clinet Count: <span id="whep_client_count">0</span>
+  </div>
+
+</body>
+<!---
+  TODO
+  - [x] 複数のWHEPの接続を受け付ける
+    - [x] serverで、WHEPクライアントにIDを振る
+    - [x] serverで、複数のemitter
+    - [x] serverで、middleboxにIDをつけてWHEP接続リクエスト(Offer)を投げる
+    - [x] middleboxで、IDをつけて複数のsendPeerを管理する
+    - [x] middleboxで、IDをつけて返答のAnswerを返す 
+  - [x] 複数のWHEPの切断を受け付ける
+    - [x] serverのwhepEventEmittersを削除
+    - [x] middleboxのsendPeerを削除
+  - [x] 複数のWHEPの接続数を表示
+  - [x] middle disconnectでWHIP/WHEPを切断する
+    - [-] serverの、whepEventEmittersを削除
+    - [x] middleboxのsendPeersを削除
+    - [ ] whepClientに、切断を伝える
+      - [ ] SSE inactive event で伝える
+  - [ ] WHIP開始前にWHEPが接続してきた場合の処理
+    - [x] 404 Not Found を返す
+    - [ ] 409 を返し、間隔を伸ばしながらリトライを促す
+    - [ ] 接続待ちのダミー映像を返す。WHIPがスタートしたら映像を差し替える
+    - [ ] SSE active event で伝える
+  - [x] WHIP切断時の、WHEP側の処理
+    - [x] WHEP側の接続を切断する(1つの場合)
+    - [x] WHEP側の接続を切断する(複数の場合)
+      - [x] serverの、whepEventEmittersを削除
+
+-->
+<script type='module'>
+  const remoteVideo = document.getElementById('remoteVideo');
+  const startButton = document.getElementById('start');
+  const stopButton = document.getElementById('stop');
+  let mediaStream = null;
+  let receivePeer = null;
+  const sendPeers = {};
+  //let sendPeer = null;
+
+  // --- WHEP peers ---
+  function addSendPeer(id, peer) {
+    sendPeers[id] = peer;
+  }
+
+  function getSendPeer(id) {
+    return sendPeers[id];
+  }
+
+  function deleteSendPeer(id) {
+    delete sendPeers[id];
+  }
+  
+  function updateWhepClientCount() {
+    const count = Object.keys(sendPeers).length;
+    const element = document.getElementById('whep_client_count');
+    element.innerText = count;
+  }
+
+
+  // --- signaling --
+  import * as signaling from './js/ws_signaling_module.js';
+  signaling.setReceiveWhipOfferHandler(receiveWhipOffer);
+  signaling.setWhipCloseHandler(whipClose);
+  signaling.setReceiveWhepOfferHandler(receiveWhepOffer);
+  signaling.setWhepCloseHandler(whepClose);
+
+  function getWebsocketUrl() {
+    const protocol = location.protocol;
+    const hostname = location.hostname;
+    const port = location.port;
+
+    let wsUrl = 'ws://';
+    if (protocol === 'https:') {
+      wsUrl = 'wss://';
+    }
+    wsUrl = wsUrl + hostname + ':' + port;
+    console.log('wsUrl=%s', wsUrl);
+
+    return wsUrl;
+  }
+
+  function startListen() {
+    const wsUrl = getWebsocketUrl();
+    signaling.connectSignalingAsync(wsUrl);
+  }
+  window.startListen = startListen;
+
+  function stopListen() {
+    closeAllWhep();
+    //whepClose();
+    whipClose();
+    signaling.disconnectSignaling();
+  }
+  window.stopListen = stopListen;
+
+  // --- for WHIP ---
+  async function receiveWhipOffer(message, type) {
+    console.log('receiveWhipOffer() type:', type);
+    console.log('receiveWhipOffer() message:', message);
+
+    // --- prepare receive peer ---
+    receivePeer = new RTCPeerConnection();
+    // receivePeer.addTransceiver('audio', {direction: 'recvonly'});
+    // receivePeer.addTransceiver('video', {direction: 'recvonly'});
+    receivePeer.ontrack = function(event) {
+      console.log('-- peer.ontrack()');
+      if (! mediaStream) {
+        mediaStream = event.streams[0];
+        playMedia(mediaStream);
+      }
+    };
+
+    // --- set remote description ---
+    const desc = new RTCSessionDescription({type: 'offer', sdp: message.sdp});
+    await receivePeer.setRemoteDescription(desc);
+
+    // --- create answer ---
+    const answer = await receivePeer.createAnswer();
+    console.log('createAnswer() succsess. answer:,', answer);
+    console.log(answer.sdp);
+    await receivePeer.setLocalDescription(answer);
+
+    // --- wait to complete ICE candidate ---
+    const answerWithIceCandidates = await waitToCompleteICEGathering(receivePeer);
+    console.log('waitToCompleteICEGathering() succsess. local SDP:', answerWithIceCandidates.sdp);
+    const data = { type: 'whip_answer', sdp: answerWithIceCandidates.sdp};
+
+    // --- send answer with ICE candidates ---
+    signaling.sendSdp(data);
+  }
+
+  // --- for WHEP ---
+  // 1クライアントだけの暫定実装
+  // 複数WHEP対応
+  async function receiveWhepOffer(message, type) {
+    console.log('receiveWhepOffer() type:', type);
+    //console.log('receiveWhepOffer() message:', message);
+    console.log('receiveWhepOffer() id:', message.id);
+    const whepId = message.id;
+
+    // -- check ---
+    if (!mediaStream) {
+      console.warn('mediaStream NOT READY');
+
+      // --- send NOTREADY message --
+      const data = { type: 'whep_notready', id: whepId };
+      signaling.sendSdp(data);
+      return;
+    }
+
+    // --- prepare receive peer ---
+    const sendPeer = new RTCPeerConnection();
+    addSendPeer(whepId, sendPeer);
+
+    // -- set auido track -- (for sora-labo, audio first)
+    mediaStream.getAudioTracks().forEach(track => {
+      const sender = sendPeer.addTrack(track, mediaStream);
+    });
+
+    // -- set video track -- (for sora-labo)
+    mediaStream.getVideoTracks().forEach(track => {
+      const sender = sendPeer.addTrack(track, mediaStream);
+    });
+
+    const trs = sendPeer.getTransceivers();
+    trs.forEach(transceiver => {
+      transceiver.direction = 'sendonly';
+      if (transceiver.sender.track.kind === 'video') {
+        console.log('---- video track transeiver ----');
+        //checkSenderParams(transceiver.sender);
+        //setupVideoCodecs(transceiver);
+      }
+      else if(transceiver.sender.track.kind === 'audio') {
+        console.log('---- audio track transeiver ----');
+        //checkSenderParams(transceiver.sender);
+        //setupAudioCodecs(transceiver);
+      }
+      else {
+        console.warn('unknown track');
+      }
+    });
+
+    sendPeer.ontrack = function(event) {
+      console.warn('-- peer.ontrack() MAY NOT HAPPEN');
+    };
+
+    // --- set remote description ---
+    const desc = new RTCSessionDescription({type: 'offer', sdp: message.sdp});
+    await sendPeer.setRemoteDescription(desc);
+
+    // --- create answer ---
+    const answer = await sendPeer.createAnswer();
+    console.log('createAnswer() succsess. answer:,', answer);
+    console.log(answer.sdp);
+    await sendPeer.setLocalDescription(answer);
+
+    // --- wait to complete ICE candidate ---
+    const answerWithIceCandidates = await waitToCompleteICEGathering(sendPeer);
+    console.log('waitToCompleteICEGathering() succsess. local SDP:', answerWithIceCandidates.sdp);
+    const data = { type: 'whep_answer', id:whepId, sdp: answerWithIceCandidates.sdp};
+
+    // --- send answer with ICE candidates ---
+    signaling.sendSdp(data);
+
+    updateWhepClientCount();
+  }
+
+  // refer cloudflare example
+  // https://github.com/cloudflare/workers-sdk/blob/main/templates/stream/webrtc/src/negotiateConnectionWithClientOffer.js
+  async function waitToCompleteICEGathering(peerConnection) {
+    return new Promise((resolve) => {
+      /** Wait at most 1 second for ICE gathering. */
+      setTimeout(function () {
+        resolve(peerConnection.localDescription);
+      }, 1000);
+      peerConnection.onicegatheringstatechange = (ev) =>
+        peerConnection.iceGatheringState === "complete" &&
+        resolve(peerConnection.localDescription);
+    });
+  }
+
+  function whipClose() {
+    console.log('whipClose()');
+    if (receivePeer) {
+      receivePeer.close();
+      receivePeer = null;
+    }
+    stopMedia();
+
+    // --- close all WHEP ---
+    //whepClose();
+    closeAllWhep();
+
+    // --- send close message ---
+  }
+
+  function whepClose(id) {
+    console.log('whepClose()');
+    const sendPeer = getSendPeer(id);
+    if (sendPeer) {
+      sendPeer.close();
+      deleteSendPeer(id);
+      //sendPeer = null;
+    }
+
+    updateWhepClientCount();
+  }
+
+  function closeAllWhep() {
+    console.log('closeAllWhep()');
+    for (const id in sendPeers) {
+      whepClose(id);
+    }
+  }
+
+  function playMedia(stream) {
+    console.log('playMedia()');
+    remoteVideo.srcObject = stream;
+    remoteVideo.play();
+  }
+
+  function stopMedia() {
+    if (remoteVideo.srcObject) {
+      remoteVideo.srcObject.getTracks().forEach(track => track.stop());
+      remoteVideo.pause();
+      remoteVideo.srcObject = null;
+    }
+
+    mediaStream = null;
+  }
+
+  // ---- auto connect ---
+  startListen();
+  updateWhepClientCount();
+
+</script>
+
+</html>
