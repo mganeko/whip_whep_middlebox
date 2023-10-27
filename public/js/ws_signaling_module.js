@@ -1,5 +1,12 @@
 'use strict';
 
+export function isSignalingOpen() {
+  if (ws && ws.readyState === ws.OPEN) {
+    return true;
+  }
+  return false;
+}
+
 // シグナリングサーバへ接続する
 export function disconnectSignaling() {
   if (ws) {

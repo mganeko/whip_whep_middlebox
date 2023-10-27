@@ -2,7 +2,8 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>WHIP/WHEP boxr</title>
+  <title>middlebox</title>
+  <script src="js/ui_helper.js"></script>
 </head>
 <body>
   <div>
@@ -76,6 +77,17 @@
     element.innerText = count;
   }
 
+  // --- UI ----
+  function updateUI() {
+    if (signaling.isSignalingOpen()) {
+      disableElementById('start_button');
+      enableElementById('stop_button');
+    }
+    else {
+      enableElementById('start_button');
+      disableElementById('stop_button');
+    }
+  }
 
   // --- signaling --
   import * as signaling from './js/ws_signaling_module.js';
@@ -99,17 +111,19 @@
     return wsUrl;
   }
 
-  function startListen() {
+  async function startListen() {
     const wsUrl = getWebsocketUrl();
-    signaling.connectSignalingAsync(wsUrl);
+    await signaling.connectSignalingAsync(wsUrl);
+    updateUI();
   }
   window.startListen = startListen;
 
-  function stopListen() {
+  async function stopListen() {
     closeAllWhep();
     //whepClose();
     whipClose();
-    signaling.disconnectSignaling();
+    await signaling.disconnectSignaling();
+    updateUI();
   }
   window.stopListen = stopListen;
 
@@ -292,6 +306,7 @@
   // ---- auto connect ---
   startListen();
   updateWhepClientCount();
+  updateUI();
 
 </script>
 
