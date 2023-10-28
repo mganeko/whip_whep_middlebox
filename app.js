@@ -111,14 +111,14 @@ app.post('/whipsvr', async (req, res) => {
    console.log('whip answer received.');
 
    // --- answer を返す ---
-   const location = 'http://' + hostName + ':' + address.port + '/whipsvrdelete';
+   const location = 'http://' + hostName + ':' + address.port + '/whipresouce';
    res.setHeader('Content-Type', contentType);
    res.setHeader('Location', location);
    res.status(201).send(sdp[0]); // 201 Created
 });
 
 // --- delete whip resource ---
-app.delete('/whipsvrdelete', async (req, res) => {
+app.delete('/whipresouce', async (req, res) => {
   console.log('---- delete whip resource ----');
   //console.log('resource:', resource);
   
@@ -178,14 +178,14 @@ app.post('/whepsvr', async (req, res) => {
 
    // --- answer を返す ---
    console.log('--- sending WHEP answer ---');
-   const location = 'http://' + hostName + ':' + address.port + '/whepsvrdelete/' + whepId;
+   const location = 'http://' + hostName + ':' + address.port + '/whepresoure/' + whepId;
    res.setHeader('Content-Type', contentType);
    res.setHeader('Location', location);
    res.status(201).send(sdp); // 201 Created
 });
 
 // --- delete whep resource ---
-app.delete('/whepsvrdelete/:id', async (req, res) => {
+app.delete('/whepresoure/:id', async (req, res) => {
   const whepId = req.params.id;
   console.log('---- delete whep resource. id:', whepId);
   //console.log('resource:', resource);
