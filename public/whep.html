@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <title>WHEP Client</title>
+  <script src="js/whipwhep_helper.js"></script>
+  <script src="js/ui_helper.js"></script>
+</head>
+
+<body>
+  <div>
+    WebRTC HTTP Egress Protocol Client
+  </div>
+  <br />
+  <div>
+    WHEP Resouce: <input type="text" id="whep_recource" size="60" value="" readonly /><br />
+  </div>
+  <br />
+  <div>
+    <button id="start_peer_button" onclick="startPeer()">Connect</button>
+    <button id="stop_peer_button" onclick="stopPeer()">Disconnect</button>
+  </div>
+
+  <div>
+    <div>Subscriber(Egress)</div>
+    <video id="remote_video" width="320" height="240" style="border: solid 1px black;">
+    </video>
+  </div>
+</body>
+<script>
+  let peer = null;
+  let mediaStream = null;
+  const remoteVideo = document.getElementById('remote_video');
+
+  function getWhepEndpoint() {
+    const WHEP_ENDPINT = '/whepsvr';
+    return WHEP_ENDPINT;
+  }
+
+  // function getAuthToken() {
+  //   return document.getElementById('auth_token').value;
+  // }
+
+  function setWhepResouce(resource) {
+    whepResource = resource;
+  }
+
+  function getWhepResoruce() {
+    return whepResource;
+  }
+
+  function updateUI() {
+    if (peer) {
+      disableElementById('start_peer_button');
+      enableElementById('stop_peer_button');
+    }
+    else {
+      disableElementById('stop_peer_button');
+      enableElementById('start_peer_button');
+    }
+
+    document.getElementById('whep_recource').value = whepResource;
+  }
+
+  async function startPeer() {
+    if (peer) {
+      console.warn('peer already exists.');
+      return;
+    }
+
+    const options = {
+      // "iceServers": [
+      //   {"urls": "stun:stun.l.google.com:19302" },
+      // ],
+      bundlePolicy: "max-bundle",
+    }
+    peer = new RTCPeerConnection(options);
+    peer.addTransceiver('audio', { direction: 'recvonly' });
+    peer.addTransceiver('video', { direction: 'recvonly' });
+    updateUI();
+
+    // -- event handler --
+    peer.ontrack = function (event) {
+      console.log('-- peer.ontrack()');
+      if (!mediaStream && event.track.kind === 'video') {
+        console.log('play remoteVideo');
+        mediaStream = event.streams[0];
+        playMedia(mediaStream);
+      }
+    };
+
+    peer.onicecandidate = async evt => {
+      if (evt.candidate) {
+        console.log(evt.candidate);
+      } else {
+        //console.log('empty ice event. SDP ready to send');
+        const sdp = await peer.localDescription;
+
+        // // --- send sdp ---
+        // console.log('--- sending sdp with WHIP---');
+        // await sendWHIP(sdp.sdp);
+      }
+    }
+    peer.onconnectionstatechange = evt => {
+      console.log('peer connectionStateChange. state:', peer.connectionState);
+      if (peer.connectionState === 'failed') {
+        console.log('-- connection failed --');
+        stopPeer();
+      }
+    }
+    peer.onsignalingstatechange = evt => {
+      console.log('peer signalingStateChange. state:', peer.signalingState);
+    }
+
+    // --- create offer ---
+    const offer = await peer.createOffer();
+    console.log('createOffer() succsess. offer:,', offer);
+    console.log(offer.sdp);
+    await peer.setLocalDescription(offer);
+
+    // --- wait to complete ICE candidate ---
+    const desc = await waitToCompleteICEGathering(peer);
+    console.log('waitToCompleteICEGathering() succsess. local SDP:', desc.sdp);
+
+    // --- send sdp ---
+    console.log('--- sending sdp with WHEP ---');
+    //await sendWHEP(desc.sdp);
+    const endpoint = getWhepEndpoint();
+    const token = '';
+    const answerSDP = await exchangeSDP(desc.sdp, endpoint, token, setWhepResouce);
+    if (answerSDP) {
+      const answer = new RTCSessionDescription({ type: "answer", sdp: answerSDP });
+      await peer.setRemoteDescription(answer);
+    }
+    else {
+      // some error
+      peer.close();
+      peer = null;
+    }
+    updateUI();
+  }
+
+  // refer cloudflare example
+  // https://github.com/cloudflare/workers-sdk/blob/main/templates/stream/webrtc/src/negotiateConnectionWithClientOffer.js
+  async function waitToCompleteICEGathering(peerConnection) {
+    return new Promise((resolve) => {
+      /** Wait at most 1 second for ICE gathering. */
+      setTimeout(function () {
+        resolve(peerConnection.localDescription);
+      }, 1000);
+      peerConnection.onicegatheringstatechange = (ev) =>
+        peerConnection.iceGatheringState === "complete" &&
+        resolve(peerConnection.localDescription);
+    });
+  }
+
+
+  // ======== WHEP ========
+
+  // -- for node server --
+  let whepResource = '';
+
+  // --- disconnect peer ---
+  async function stopPeer() {
+    const resoruce = getWhepResoruce();
+    if (resoruce && resoruce.length > 0) {
+      console.log('--- disconnect ---');
+      const endpoint = getWhepEndpoint();
+      const token = '';
+      await requestDeleteResouce(resoruce, endpoint, token);
+      console.log('disconnect response:');
+      if (peer) {
+        peer.close();
+        peer = null;
+      }
+      setWhepResouce('');
+    }
+
+    stopMedia();
+    updateUI();
+  }
+
+  function playMedia(stream) {
+    console.log('playMedia()');
+    remoteVideo.srcObject = stream;
+    remoteVideo.play();
+    remoteVideo.volume = 0;
+  }
+
+  function stopMedia() {
+    if (remoteVideo.srcObject) {
+      remoteVideo.srcObject.getTracks().forEach(track => track.stop());
+      remoteVideo.pause();
+      remoteVideo.srcObject = null;
+    }
+
+    mediaStream = null;
+  }
+
+  // ========= init UI ==========
+  updateUI();
+</script>
+
+</html>
