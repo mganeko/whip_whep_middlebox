@@ -284,3 +284,62 @@ function sendJson(data) {
     }
   });
 }
+
+// ==== SSE Server Sent Event ====
+
+// TODO
+//  - [ ] SSE での定期的にメッセージを送る実験
+//    - [ ] サーバー側実装
+//    - [ ] クライアント側実装
+//  - [ ] SSEで配信開始を知らせる実装
+//   - [ ] サーバー側実装、クライアント1つ前提
+//   - [ ] サーバー側実装、タイムアウト対応
+//   - [ ] サーバー側実装、クライアント複数対応
+//   - [ ] クライアント側実装
+//  - [ ] SSEで配信終了を知らせる実装
+//   - [ ] サーバー側実装、クライアント1つ前提
+//   - [ ] サーバー側実装、タイムアウト対応
+//   - [ ] サーバー側実装、クライアント複数対応
+//   - [ ] クライアント側実装
+
+
+app.get('/sse', function (req, res) {
+  console.log('--- sse connected -');
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
+  // --- keep alive --- (avoid timeout )
+  const timerKeepLive = setInterval(() => {
+    res.write('\n');
+  }, 15000);
+
+  /*--
+  // --- event loop ---
+  const eventEmitter = new EventEmitter();
+  eventEmitter.on('message', (data) => {
+    res.write('data: ' + data + '\n\n');
+  });
+  // --- websocket message ---
+  wsServer.on('connection', function (ws) {
+    ws.on('message', function (message) {
+      console.log('wsServer.on(message):', message);
+      eventEmitter.emit('message', message);
+    });
+  });
+  --*/
+
+  // --- send data ---
+  let dataCount = 0;
+  const timerData = setInterval(() => {
+    res.write('data: ' + (dataCount++) + '\n\n');
+  }, 90*1000);
+
+  // --- client disconnected ---
+  req.on('close', () => {
+    console.log('--- sse disconnected ---');
+    clearInterval(timerKeepLive);
+    clearInterval(timerData);
+  });
+});

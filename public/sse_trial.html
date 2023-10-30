@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <title>SSE client</title>
+</head>
+
+<body>
+</body>
+<script>
+  const eventSource = new EventSource('/sse');
+  eventSource.onmessage = (event) => {
+    console.log(event.data);
+  };
+</script>
+
+</html>
+
