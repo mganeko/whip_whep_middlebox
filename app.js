@@ -2,6 +2,7 @@
 
 const express = require('express');
 const bodyParser = require('body-parser')
+const cors = require('cors');
 
 
 // --- get PORT from env --
@@ -55,11 +56,13 @@ function deleteAllWhepEventEmitters() {
 const http = require("http");
 //const WebSocketServer = require('ws').Server;
 const WebSocket = require('ws');
+const e = require('express');
 const WebSocketServer = WebSocket.Server;
 
 const app = express();
 app.use(bodyParser.text({ type: "*/*" }));
 app.use(express.static('public'));
+app.use(cors());
 
 let webServer = null;
 const hostName = 'localhost';
@@ -260,6 +263,12 @@ wsServer.on('connection', function (ws) {
         console.error('whepEventEmitter is null');
       }
     }
+    else if (data.type === 'whip_start') {
+      notifyWhipStart();
+    }
+    else if (data.type === 'whip_end') {
+      notifyWhipEnd();
+    }
   });
   ws.on('close', function () {
     console.log('-- websocket closed --');
@@ -288,9 +297,9 @@ function sendJson(data) {
 // ==== SSE Server Sent Event ====
 
 // TODO
-//  - [ ] SSE での定期的にメッセージを送る実験
-//    - [ ] サーバー側実装
-//    - [ ] クライアント側実装
+//  - [x] SSE での定期的にメッセージを送る実験
+//    - [x] サーバー側実装
+//    - [x] クライアント側実装
 //  - [ ] SSEで配信開始を知らせる実装
 //   - [ ] サーバー側実装、クライアント1つ前提
 //   - [ ] サーバー側実装、タイムアウト対応
@@ -302,7 +311,7 @@ function sendJson(data) {
 //   - [ ] サーバー側実装、クライアント複数対応
 //   - [ ] クライアント側実装
 
-
+let sseResponse = null
 app.get('/sse', function (req, res) {
   console.log('--- sse connected -');
   res.writeHead(200, {
@@ -310,6 +319,7 @@ app.get('/sse', function (req, res) {
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive'
   });
+  sseResponse = res;
   // --- keep alive --- (avoid timeout )
   const timerKeepLive = setInterval(() => {
     res.write('\n');
@@ -333,13 +343,28 @@ app.get('/sse', function (req, res) {
   // --- send data ---
   let dataCount = 0;
   const timerData = setInterval(() => {
-    res.write('data: ' + (dataCount++) + '\n\n');
-  }, 90*1000);
+    res.write('data: ' + 'tick=' + (dataCount++) + '\n\n');
+  }, 10*1000);
 
   // --- client disconnected ---
   req.on('close', () => {
     console.log('--- sse disconnected ---');
     clearInterval(timerKeepLive);
     clearInterval(timerData);
+    sseResponse = null;
   });
 });
+
+function sendSseMessage(data) {
+  if (sseResponse) {
+    sseResponse.write('data: ' + data + '\n\n');
+  }
+}
+
+function notifyWhipStart() {
+  sendSseMessage('whip_start');
+}
+
+function notifyWhipEnd() {
+  sendSseMessage('whip_end');
+}

@@ -128,6 +128,10 @@ export function setWhepCloseHandler(handler) {
 }
 let whepClosedFunc = null;
 
+export function sendCustomMessage(message) {
+  console.log('---sending custom message---');
+  ws.send(message);
+}
 
 // ---- inner variable, function ----
 let ws = null;

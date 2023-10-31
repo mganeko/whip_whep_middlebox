@@ -144,6 +144,15 @@
       }
     };
 
+    // --- notify WHIP connected ---
+    receivePeer.onconnectionstatechange = evt => {
+      console.log('receivePeer connectionStateChange. state:', receivePeer.connectionState);
+      if (receivePeer.connectionState === 'connected') {
+        console.log('-- connection connected --');
+        signaling.sendCustomMessage(JSON.stringify({ type: 'whip_start'}));
+      }
+    }
+
     // --- set remote description ---
     const desc = new RTCSessionDescription({type: 'offer', sdp: message.sdp});
     await receivePeer.setRemoteDescription(desc);
@@ -266,6 +275,7 @@
     closeAllWhep();
 
     // --- send close message ---
+    signaling.sendCustomMessage(JSON.stringify({ type: 'whip_end'}));
   }
 
   function whepClose(id) {

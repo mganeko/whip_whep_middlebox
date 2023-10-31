@@ -12,6 +12,12 @@
   const eventSource = new EventSource('/sse');
   eventSource.onmessage = (event) => {
     console.log(event.data);
+    if (event.data === 'whip_start') {
+      console.log('--- whip started ----');
+    }
+    else if (event.data === 'whip_end') {
+      console.log('--- whip ended ----');
+    }
   };
 </script>
 
