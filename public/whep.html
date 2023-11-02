@@ -20,6 +20,8 @@
   <div>
     <button id="start_peer_button" onclick="startPeer()">Connect</button>
     <button id="stop_peer_button" onclick="stopPeer()">Disconnect</button>
+    &nbsp;
+    <button id="connect_sse_button" onclick="waitWithSse()">Wait with SSE</button>
   </div>
 
   <div>
@@ -61,6 +63,13 @@
     }
 
     document.getElementById('whep_recource').value = whepResource;
+
+    if (eventSource) {
+      disableElementById('connect_sse_button');
+    }
+    else {
+      enableElementById('connect_sse_button');
+    }
   }
 
   async function startPeer() {
@@ -197,6 +206,34 @@
 
     mediaStream = null;
   }
+
+  // ======== SSE ========
+  let eventSource = null;
+
+  function waitWithSse() {
+    if (eventSource) {
+      console.warn('eventSource already exists.');
+      return;
+    }
+
+    console.log('--- wait with SSE ---');
+    eventSource = new EventSource('/sse');
+    eventSource.onmessage = (event) => {
+      console.log(event.data);
+      if (event.data === 'whip_start') {
+        console.log('--- whip started ----');
+        startPeer();
+      }
+      else if (event.data === 'whip_end') {
+        console.log('--- whip ended ----');
+        stopPeer();
+      }
+    };
+
+    updateUI();
+  }
+
+
 
   // ========= init UI ==========
   updateUI();
