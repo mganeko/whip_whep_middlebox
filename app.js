@@ -16,6 +16,10 @@ const { EventEmitter, once } = require('events');
 let whipEventEmitter = null;
 const whepEventEmitters = {};
 
+function isWhipStarted() {
+  return (whipEventEmitter !== null);
+}
+
 let whepId = 0;
 function generateWhepId() {
   return 'whep_' + String(whepId++);
@@ -300,18 +304,20 @@ function sendJson(data) {
 //  - [x] SSE での定期的にメッセージを送る実験
 //    - [x] サーバー側実装
 //    - [x] クライアント側実装
-//  - [ ] SSEで配信開始を知らせる実装
+//  - [x] SSEで配信開始を知らせる実装
 //   - [x] サーバー側実装、クライアント1つ前提
 //   - [x] サーバー側実装、タイムアウト対応
 //   - [x] サーバー側実装、クライアント複数対応
 //   - [x] クライアント側実装
-//   - [ ] SSE接続時に、すでにWHIPがスタートしていたら知らせるか？
+//   - [x] SSE接続時に、すでにWHIPがスタートしていたら知らせるか？ → 知らせる
 //   - [x] SSE接続が全て切れた場合の処理が動いているか？
 //  - [x] SSEで配信終了を知らせる実装
 //   - [x] サーバー側実装、クライアント1つ前提
 //   - [x] サーバー側実装、タイムアウト対応
 //   - [x] サーバー側実装、クライアント複数対応
 //   - [x] クライアント側実装
+//  - [ ] WHEP SSEの仕様に従う
+
 
 const SSE_KEEP_ALIVE_INTERVAL = 30 * 1000; // 15 sec
 let timerKeepLive = null;
@@ -370,6 +376,12 @@ app.get('/sse', function (req, res) {
       }
     }
   });
+
+  // ---- when already whip started ----
+  if (isWhipStarted()) {
+    console.log('--- whip already started ---');
+    sendSseMessage(res, 'whip_start');
+  }
 });
 
 
@@ -397,10 +409,8 @@ function sendSseMessageToAll(data) {
   });
 }
 
-function sendSseMessage(data) {
-  if (sseResponse) {
-    sseResponse.write('data: ' + data + '\n\n');
-  }
+function sendSseMessage(res, data) {
+  res.write('data: ' + data + '\n\n');
 }
 
 function notifyWhipStart() {
