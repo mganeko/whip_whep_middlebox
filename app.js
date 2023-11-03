@@ -301,17 +301,23 @@ function sendJson(data) {
 //    - [x] サーバー側実装
 //    - [x] クライアント側実装
 //  - [ ] SSEで配信開始を知らせる実装
-//   - [ ] サーバー側実装、クライアント1つ前提
-//   - [ ] サーバー側実装、タイムアウト対応
-//   - [ ] サーバー側実装、クライアント複数対応
-//   - [ ] クライアント側実装
-//  - [ ] SSEで配信終了を知らせる実装
-//   - [ ] サーバー側実装、クライアント1つ前提
-//   - [ ] サーバー側実装、タイムアウト対応
-//   - [ ] サーバー側実装、クライアント複数対応
-//   - [ ] クライアント側実装
+//   - [x] サーバー側実装、クライアント1つ前提
+//   - [x] サーバー側実装、タイムアウト対応
+//   - [x] サーバー側実装、クライアント複数対応
+//   - [x] クライアント側実装
+//   - [ ] SSE接続時に、すでにWHIPがスタートしていたら知らせるか？
+//   - [x] SSE接続が全て切れた場合の処理が動いているか？
+//  - [x] SSEで配信終了を知らせる実装
+//   - [x] サーバー側実装、クライアント1つ前提
+//   - [x] サーバー側実装、タイムアウト対応
+//   - [x] サーバー側実装、クライアント複数対応
+//   - [x] クライアント側実装
 
-let sseResponse = null
+const SSE_KEEP_ALIVE_INTERVAL = 30 * 1000; // 15 sec
+let timerKeepLive = null;
+//let sseResponse = null
+
+
 app.get('/sse', function (req, res) {
   console.log('--- sse connected -');
   res.writeHead(200, {
@@ -319,11 +325,15 @@ app.get('/sse', function (req, res) {
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive'
   });
-  sseResponse = res;
+  //sseResponse = res;
+  addSseClient(res);
+
   // --- keep alive --- (avoid timeout )
-  const timerKeepLive = setInterval(() => {
-    res.write('\n');
-  }, 15000);
+  if (! timerKeepLive) {
+    timerKeepLive = setInterval(() => {
+      res.write('\n');
+    }, SSE_KEEP_ALIVE_INTERVAL);
+  }
 
   /*--
   // --- event loop ---
@@ -341,19 +351,51 @@ app.get('/sse', function (req, res) {
   --*/
 
   // --- send data ---
-  let dataCount = 0;
-  const timerData = setInterval(() => {
-    res.write('data: ' + 'tick=' + (dataCount++) + '\n\n');
-  }, 10*1000);
+  // let dataCount = 0;
+  // const timerData = setInterval(() => {
+  //   res.write('data: ' + 'tick=' + (dataCount++) + '\n\n');
+  // }, 10*1000);
 
   // --- client disconnected ---
   req.on('close', () => {
     console.log('--- sse disconnected ---');
-    clearInterval(timerKeepLive);
-    clearInterval(timerData);
-    sseResponse = null;
+    removeSseClient(res);
+    //sseResponse = null;
+    
+    if (! anySseClient()) {
+      console.log('--- no more sse clients, stop keep alive ---');
+      if (timerKeepLive) {
+        clearInterval(timerKeepLive);
+        timerKeepLive = null;
+      }
+    }
   });
 });
+
+
+// --- SSE client ---
+const sseClients = [];
+function addSseClient(res) {
+  sseClients.push(res);
+}
+
+function removeSseClient(res) {
+  const index = sseClients.indexOf(res);
+  if (index >= 0) {
+    sseClients.splice(index, 1);
+  }
+}
+
+function anySseClient() {
+  //console.log('anySseClient() sseClients.length:', sseClients.length);
+  return (sseClients.length > 0);
+}
+
+function sendSseMessageToAll(data) {
+  sseClients.forEach((res) => {
+    res.write('data: ' + data + '\n\n');
+  });
+}
 
 function sendSseMessage(data) {
   if (sseResponse) {
@@ -362,9 +404,11 @@ function sendSseMessage(data) {
 }
 
 function notifyWhipStart() {
-  sendSseMessage('whip_start');
+  //sendSseMessage('whip_start');
+  sendSseMessageToAll('whip_start');
 }
 
 function notifyWhipEnd() {
-  sendSseMessage('whip_end');
+  //sendSseMessage('whip_end');
+  sendSseMessageToAll('whip_end');
 }
